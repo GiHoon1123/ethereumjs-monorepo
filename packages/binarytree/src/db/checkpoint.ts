@@ -138,6 +138,15 @@ export class CheckpointDB implements DB {
   async get(key: Uint8Array): Promise<Uint8Array | undefined> {
     // Using deprecated bytesToUnprefixedHex for performance: used as cache/database keys (string encoding).
     const keyHex = bytesToUnprefixedHex(key)
+
+    // Checkpointed writes only update the diff map, so they must take
+    // precedence over values populated in the cache before the checkpoint.
+    for (let index = this.checkpoints.length - 1; index >= 0; index--) {
+      if (this.checkpoints[index].keyValueMap.has(keyHex)) {
+        return this.checkpoints[index].keyValueMap.get(keyHex)
+      }
+    }
+
     if (this._cache !== undefined) {
       const value = this._cache.get(keyHex)
       this._stats.cache.reads += 1
@@ -147,13 +156,7 @@ export class CheckpointDB implements DB {
       }
     }
 
-    // Lookup the value in our diff cache. We return the latest checkpointed value (which should be the value on disk)
-    for (let index = this.checkpoints.length - 1; index >= 0; index--) {
-      if (this.checkpoints[index].keyValueMap.has(keyHex)) {
-        return this.checkpoints[index].keyValueMap.get(keyHex)
-      }
-    }
-    // Nothing has been found in diff cache, look up from disk
+    // Nothing has been found in the checkpoint diff or cache, look up from disk
     const value = await this.db.get(keyHex, {
       keyEncoding: KeyEncoding.String,
       valueEncoding: this.valueEncoding,
